@@ -1,0 +1,420 @@
+import json
+import logging
+import time
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from enum import Enum
+import asyncio
+from collections import defaultdict
+
+from aiokafka import AIOKafkaConsumer
+from asyncpg import create_pool, Pool, Connection
+from prometheus_client import start_http_server, Counter, Histogram, Gauge
+from pydantic import BaseModel, validator
+
+############################
+# Data Models
+############################
+
+class MarketDataPoint(BaseModel):
+    """Validates and structures incoming market data"""
+    event_time: str
+    symbol: str
+    open_price: float
+    high_price: float
+    low_price: float
+    close_price: float
+    volume: float
+    start_time: str
+    timestamp: str
+
+    @validator('open_price', 'high_price', 'low_price', 'close_price', 'volume')
+    def validate_numeric_fields(cls, v):
+        if v < 0:
+            raise ValueError("Numeric fields must be non-negative")
+        return v
+
+    @validator('symbol')
+    def validate_symbol(cls, v):
+        if not v or len(v) > 20:  # Arbitrary max length
+            raise ValueError("Symbol must be non-empty and reasonable length")
+        return v.upper()
+
+class CircuitBreakerState(Enum):
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+@dataclass
+class CircuitBreakerConfig:
+    failure_threshold: int = 5
+    reset_timeout: float = 60.0
+    half_open_timeout: float = 30.0
+
+############################
+# Configuration
+############################
+
+config = {
+    "kafka": {
+        "bootstrap_servers": "trading-cluster-kafka-bootstrap.kafka:9092",
+        "topic": "coinbase.candles",
+        "group_id": "timescale_ingest_group",
+        "initial_poll_timeout": 1.0,
+        "initial_max_batch_size": 500,
+        "consumer_timeout_ms": 5000
+    },
+    "timescaledb": {
+        "host": "timescaledb.default.svc.cluster.local",
+        "port": 5432,
+        "dbname": "market_data",
+        "user": "timescale_user",
+        "password": "timescale_password",
+        "pool_size": 10,
+        "connection_timeout": 10
+    },
+    "insert": {
+        "batch_size": 500,
+        "time_interval": 5.0,
+        "retry_attempts": 3,
+        "retry_delay": 1.0
+    },
+    "metrics": {
+        "port": 8000
+    },
+    "circuit_breaker": CircuitBreakerConfig(),
+    "logging": {
+        "level": "INFO"
+    },
+    "dynamic_polling": {
+        "latency_threshold_high": 1.0,
+        "latency_threshold_low": 0.2,
+        "poll_timeout_min": 0.5,
+        "poll_timeout_max": 5.0,
+        "batch_size_min": 100,
+        "batch_size_max": 2000
+    }
+}
+
+############################
+# Metrics Setup
+############################
+
+# Message processing metrics
+messages_consumed = Counter(
+    "timescale_ingest_messages_consumed_total",
+    "Total number of messages consumed",
+    ["symbol"]
+)
+messages_inserted = Counter(
+    "timescale_ingest_messages_inserted_total",
+    "Total number of messages inserted",
+    ["symbol"]
+)
+invalid_messages = Counter(
+    "timescale_ingest_invalid_messages_total",
+    "Total number of invalid messages",
+    ["reason"]
+)
+db_insert_errors = Counter(
+    "timescale_ingest_db_insert_errors_total",
+    "Total number of DB insert errors",
+    ["error_type"]
+)
+
+# Latency metrics
+message_lag = Histogram(
+    "timescale_ingest_message_lag_seconds",
+    "Latency from event_time to insertion time",
+    buckets=[.005, .01, .025, .05, .075, .1, .25, .5, .75, 1.0, 2.5, 5.0]
+)
+db_insert_latency = Histogram(
+    "timescale_ingest_db_insert_latency_seconds",
+    "DB insertion batch latency",
+    buckets=[.005, .01, .025, .05, .075, .1, .25, .5, .75, 1.0, 2.5, 5.0]
+)
+
+# System state metrics
+current_batch_size = Gauge(
+    "timescale_ingest_current_batch_size",
+    "Current batch size"
+)
+circuit_breaker_state = Gauge(
+    "timescale_ingest_circuit_breaker_state",
+    "Circuit breaker state (0=closed, 1=half-open, 2=open)"
+)
+db_connection_pool_size = Gauge(
+    "timescale_ingest_db_connection_pool_size",
+    "Current database connection pool size"
+)
+
+############################
+# Circuit Breaker
+############################
+
+class DatabaseCircuitBreaker:
+    def __init__(self, config: CircuitBreakerConfig):
+        self.state = CircuitBreakerState.CLOSED
+        self.failures = 0
+        self.last_failure_time = 0
+        self.last_success_time = time.time()
+        self.config = config
+        
+    def _update_metrics(self):
+        circuit_breaker_state.set(
+            {
+                CircuitBreakerState.CLOSED: 0,
+                CircuitBreakerState.HALF_OPEN: 1,
+                CircuitBreakerState.OPEN: 2
+            }[self.state]
+        )
+
+    async def execute(self, operation, *args, **kwargs):
+        if self.state == CircuitBreakerState.OPEN:
+            if time.time() - self.last_failure_time >= self.config.reset_timeout:
+                self.state = CircuitBreakerState.HALF_OPEN
+                self._update_metrics()
+            else:
+                raise Exception("Circuit breaker is open")
+
+        try:
+            result = await operation(*args, **kwargs)
+            
+            if self.state == CircuitBreakerState.HALF_OPEN:
+                self.state = CircuitBreakerState.CLOSED
+                self._update_metrics()
+            
+            self.failures = 0
+            self.last_success_time = time.time()
+            return result
+
+        except Exception as e:
+            self.failures += 1
+            self.last_failure_time = time.time()
+            
+            if self.failures >= self.config.failure_threshold:
+                self.state = CircuitBreakerState.OPEN
+                self._update_metrics()
+            
+            raise e
+
+############################
+# Database Operations
+############################
+
+class DatabaseManager:
+    def __init__(self, pool: Pool, circuit_breaker: DatabaseCircuitBreaker):
+        self.pool = pool
+        self.circuit_breaker = circuit_breaker
+        self._setup_tables()
+
+    async def _setup_tables(self):
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS market_data (
+                    time TIMESTAMPTZ NOT NULL,
+                    symbol TEXT NOT NULL,
+                    open_price DOUBLE PRECISION NOT NULL,
+                    high_price DOUBLE PRECISION NOT NULL,
+                    low_price DOUBLE PRECISION NOT NULL,
+                    close_price DOUBLE PRECISION NOT NULL,
+                    volume DOUBLE PRECISION NOT NULL,
+                    ingest_time TIMESTAMPTZ DEFAULT NOW()
+                );
+                
+                SELECT create_hypertable('market_data', 'time', if_not_exists => TRUE);
+                CREATE INDEX IF NOT EXISTS idx_market_data_symbol ON market_data (symbol, time DESC);
+            """)
+
+    async def insert_batch(self, records: List[Dict[str, Any]]):
+        async def _do_insert():
+            async with self.pool.acquire() as conn:
+                async with conn.transaction():
+                    await conn.executemany("""
+                        INSERT INTO market_data (
+                            time, symbol, open_price, high_price, 
+                            low_price, close_price, volume
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    """, [
+                        (
+                            r['event_time'], r['symbol'], r['open_price'],
+                            r['high_price'], r['low_price'], r['close_price'],
+                            r['volume']
+                        ) for r in records
+                    ])
+
+        return await self.circuit_breaker.execute(_do_insert)
+
+############################
+# Message Processing
+############################
+
+class MessageProcessor:
+    def __init__(self, db_manager: DatabaseManager):
+        self.db_manager = db_manager
+        self.records_buffer: List[Dict[str, Any]] = []
+        self.last_flush_time = time.time()
+        
+        # Dynamic polling parameters
+        self.current_poll_timeout = config["kafka"]["initial_poll_timeout"]
+        self.current_max_batch_size = config["kafka"]["initial_max_batch_size"]
+
+    def parse_message(self, raw_value: bytes) -> Optional[Dict[str, Any]]:
+        try:
+            data = json.loads(raw_value.decode("utf-8"))
+            return MarketDataPoint(**data).dict()
+        except json.JSONDecodeError:
+            invalid_messages.labels(reason="json_decode_error").inc()
+            return None
+        except ValueError as e:
+            invalid_messages.labels(reason="validation_error").inc()
+            logging.warning(f"Validation error: {str(e)}")
+            return None
+
+    async def process_message(self, msg):
+        data = self.parse_message(msg.value)
+        if data:
+            messages_consumed.labels(symbol=data["symbol"]).inc()
+            self.records_buffer.append(data)
+            current_batch_size.set(len(self.records_buffer))
+
+            if self._should_flush():
+                await self._flush_buffer()
+
+    def _should_flush(self) -> bool:
+        if len(self.records_buffer) >= self.current_max_batch_size:
+            return True
+        if (time.time() - self.last_flush_time) >= config["insert"]["time_interval"]:
+            return True
+        return False
+
+    async def _flush_buffer(self):
+        if not self.records_buffer:
+            return
+
+        start_time = time.time()
+        try:
+            # Group records by symbol for better database performance
+            batched_records = defaultdict(list)
+            for record in self.records_buffer:
+                batched_records[record["symbol"]].append(record)
+
+            for symbol, symbol_records in batched_records.items():
+                await self.db_manager.insert_batch(symbol_records)
+                messages_inserted.labels(symbol=symbol).inc(len(symbol_records))
+
+            insert_latency = time.time() - start_time
+            db_insert_latency.observe(insert_latency)
+            
+            self._adapt_polling_parameters(insert_latency)
+            
+        except Exception as e:
+            db_insert_errors.labels(error_type=type(e).__name__).inc()
+            logging.error(f"Failed to insert batch: {str(e)}", exc_info=True)
+            await self._handle_insert_failure(e)
+        
+        finally:
+            self.records_buffer.clear()
+            current_batch_size.set(0)
+            self.last_flush_time = time.time()
+
+    def _adapt_polling_parameters(self, insert_latency: float):
+        dyn_conf = config["dynamic_polling"]
+        
+        if insert_latency > dyn_conf["latency_threshold_high"]:
+            self.current_poll_timeout = min(
+                self.current_poll_timeout * 1.5,
+                dyn_conf["poll_timeout_max"]
+            )
+            self.current_max_batch_size = max(
+                int(self.current_max_batch_size * 0.8),
+                dyn_conf["batch_size_min"]
+            )
+        elif insert_latency < dyn_conf["latency_threshold_low"]:
+            self.current_poll_timeout = max(
+                self.current_poll_timeout * 0.8,
+                dyn_conf["poll_timeout_min"]
+            )
+            self.current_max_batch_size = min(
+                int(self.current_max_batch_size * 1.2),
+                dyn_conf["batch_size_max"]
+            )
+
+    async def _handle_insert_failure(self, error: Exception):
+        # Implement retry logic with exponential backoff
+        for attempt in range(config["insert"]["retry_attempts"]):
+            try:
+                await asyncio.sleep(
+                    config["insert"]["retry_delay"] * (2 ** attempt)
+                )
+                await self._flush_buffer()
+                return
+            except Exception as e:
+                logging.warning(
+                    f"Retry attempt {attempt + 1} failed: {str(e)}"
+                )
+
+        # If all retries fail, send to DLQ
+        # This would be implemented based on your specific requirements
+        logging.error("All retry attempts failed, sending to DLQ")
+
+############################
+# Main Application
+############################
+
+class KafkaTimescaleIngestion:
+    def __init__(self):
+        self.consumer = None
+        self.db_pool = None
+        self.db_manager = None
+        self.message_processor = None
+        self.running = False
+
+    async def startup(self):
+        # Start Prometheus metrics server
+        start_http_server(config["metrics"]["port"])
+        
+        # Initialize Kafka consumer
+        self.consumer = AIOKafkaConsumer(
+            config["kafka"]["topic"],
+            bootstrap_servers=config["kafka"]["bootstrap_servers"],
+            group_id=config["kafka"]["group_id"],
+            enable_auto_commit=True,
+            auto_offset_reset="earliest"
+        )
+        await self.consumer.start()
+        
+        # Initialize database connections
+        self.db_pool = await create_pool(
+            host=config["timescaledb"]["host"],
+            port=config["timescaledb"]["port"],
+            database=config["timescaledb"]["dbname"],
+            user=config["timescaledb"]["user"],
+            password=config["timescaledb"]["password"],
+            min_size=1,
+            max_size=config["timescaledb"]["pool_size"]
+        )
+        
+        # Initialize components
+        circuit_breaker = DatabaseCircuitBreaker(config["circuit_breaker"])
+        self.db_manager = DatabaseManager(self.db_pool, circuit_breaker)
+        self.message_processor = MessageProcessor(self.db_manager)
+        
+        self.running = True
+
+    async def shutdown(self):
+        self.running = False
+        
+        if self.message_processor and self.message_processor.records_buffer:
+            await self.message_processor._flush_buffer()
+        
+        if self.consumer:
+            await self.consumer.stop()
+        
+        if self.db_pool:
+            await self.db_pool.close()
+
+    async def run(self):
+        try:
+            await self
