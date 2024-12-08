@@ -3,7 +3,7 @@
 # Default values
 NAMESPACE="trading"
 IMAGE_TAG=${IMAGE_TAG:-"latest"}
-REGISTRY_HOST=${REGISTRY_HOST:-"registry.local"}
+REGISTRY_HOST=${REGISTRY_HOST:-"172.22.14.222"}
 REGISTRY_PORT=${REGISTRY_PORT:-"5001"}
 IMAGE_NAME="kafka-timescale-ingestor"
 FULL_IMAGE_NAME="${REGISTRY_HOST}:${REGISTRY_PORT}/${IMAGE_NAME}"
@@ -50,7 +50,7 @@ verify_prerequisites() {
 
 verify_registry_connection() {
     echo -e "${YELLOW}Verifying registry connection...${NC}"
-    if ! curl --insecure -s "https://${REGISTRY_HOST}:${REGISTRY_PORT}/v2/_catalog" > /dev/null; then
+    if ! curl --cacert /etc/rancher/k3s/certs/registry.crt -s "https://${REGISTRY_HOST}:${REGISTRY_PORT}/v2/_catalog" > /dev/null; then
         echo -e "${RED}Cannot access registry at ${REGISTRY_HOST}:${REGISTRY_PORT}${NC}"
         exit 1
     fi
@@ -103,12 +103,12 @@ verify_image() {
     local image_url="${FULL_IMAGE_NAME}:${IMAGE_TAG}"
     
     # Try to pull the image locally first
-    if ! docker pull --insecure-registry ${REGISTRY_HOST}:${REGISTRY_PORT} $image_url; then
+    if ! docker pull $image_url; then
         echo -e "${RED}Failed to pull image: $image_url${NC}"
         echo -e "${YELLOW}Checking if image exists in registry...${NC}"
         
         # Check if image exists in registry
-        if curl --insecure -s "https://${REGISTRY_HOST}:${REGISTRY_PORT}/v2/${IMAGE_NAME}/tags/list" | grep -q "\"${IMAGE_TAG}\""; then
+        if curl --cacert /etc/rancher/k3s/certs/registry.crt -s "https://${REGISTRY_HOST}:${REGISTRY_PORT}/v2/${IMAGE_NAME}/tags/list" | grep -q "\"${IMAGE_TAG}\""; then
             echo -e "${YELLOW}Image exists in registry but cannot be pulled. Check registry credentials and network policy.${NC}"
         else
             echo -e "${RED}Image $image_url not found in registry${NC}"

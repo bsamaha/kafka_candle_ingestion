@@ -15,5 +15,5 @@ commonLabels:
 
 images:
 - name: kafka-timescale-ingestor
-  newName: registry.local:5001/kafka-timescale-ingestor
+  newName: 172.22.14.222:5001/kafka-timescale-ingestor
   newTag: latest 

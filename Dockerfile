@@ -1,5 +1,5 @@
 # Build stage
-FROM registry.local:5001/python:3.12-slim AS builder
+FROM 172.22.14.222:5001/python:3.12-slim AS builder
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -22,7 +22,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Final stage
-FROM registry.local:5001/python:3.12-slim
+FROM 172.22.14.222:5001/python:3.12-slim
 
 # Set environment variables
 ENV PYTHONPATH=/app \
