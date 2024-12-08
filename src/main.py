@@ -1,5 +1,6 @@
 import os
 import asyncio
+import signal
 from typing import Optional
 from aiokafka import AIOKafkaConsumer
 from src.core.processor import KafkaTimescaleIngestion, MessageProcessor
@@ -20,6 +21,14 @@ async def main() -> None:
     try:
         await app.startup()
         
+        # Setup signal handlers for graceful shutdown
+        loop = asyncio.get_running_loop()
+        signals = (signal.SIGTERM, signal.SIGINT)
+        for s in signals:
+            loop.add_signal_handler(
+                s, lambda s=s: asyncio.create_task(app.shutdown())
+            )
+            
         consumer: AIOKafkaConsumer = app.consumer # type: ignore
         message_processor: MessageProcessor = app.message_processor # type: ignore
             
