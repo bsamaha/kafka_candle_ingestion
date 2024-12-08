@@ -14,7 +14,7 @@ spec:
         app: kafka-timescale-ingestor
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "8001"
+        prometheus.io/port: "8002"
         prometheus.io/path: "/metrics"
     spec:
       securityContext:
@@ -27,7 +27,9 @@ spec:
         imagePullPolicy: Always
         ports:
         - containerPort: 8001
-          name: metrics
+          name: health
+        - containerPort: 8002
+          name: prometheus
         envFrom:
         - configMapRef:
             name: kafka-timescale-config
@@ -54,7 +56,7 @@ spec:
         livenessProbe:
           httpGet:
             path: /health
-            port: metrics
+            port: health
           initialDelaySeconds: 30
           periodSeconds: 30
           timeoutSeconds: 5
@@ -62,13 +64,13 @@ spec:
         readinessProbe:
           httpGet:
             path: /health
-            port: metrics
+            port: health
           initialDelaySeconds: 15
           periodSeconds: 15
         startupProbe:
           httpGet:
             path: /health
-            port: metrics
+            port: health
           failureThreshold: 30
           periodSeconds: 10
         securityContext:
@@ -78,6 +80,11 @@ spec:
           capabilities:
             drop:
             - ALL
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 10"]
+        terminationGracePeriodSeconds: 30
       imagePullSecrets:
       - name: local-registry-cred
   strategy:

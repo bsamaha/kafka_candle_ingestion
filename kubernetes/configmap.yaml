@@ -44,7 +44,7 @@ data:
   CB_HALF_OPEN_TIMEOUT: "30.0"
   
   # Logging Configuration
-  LOG_LEVEL: "INFO"
+  LOG_LEVEL: "DEBUG"
   
   # Resource Limits Configuration
   MEMORY_LIMIT_MB: "512"

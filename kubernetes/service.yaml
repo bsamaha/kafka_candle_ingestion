@@ -7,7 +7,10 @@ spec:
   selector:
     app: kafka-timescale-ingestor
   ports:
-  - name: metrics
+  - name: health
     port: 8001
-    targetPort: metrics
+    targetPort: health
+  - name: prometheus
+    port: 8002
+    targetPort: prometheus
   type: ClusterIP 

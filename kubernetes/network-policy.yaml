@@ -20,7 +20,9 @@ spec:
           name: monitoring
     ports:
     - protocol: TCP
-      port: 8000  # Metrics port
+      port: 8001  # Health check port
+    - protocol: TCP
+      port: 8002  # Prometheus metrics port
   egress:
   - to:
     # Allow connections to Kafka
