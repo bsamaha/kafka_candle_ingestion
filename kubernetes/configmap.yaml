@@ -28,7 +28,7 @@ data:
   INSERT_RETRY_DELAY: "1.0"
   
   # Metrics Configuration
-  METRICS_PORT: "8000"
+  METRICS_PORT: "8001"
   
   # Dynamic Polling Configuration
   LATENCY_THRESHOLD_HIGH: "1.0"

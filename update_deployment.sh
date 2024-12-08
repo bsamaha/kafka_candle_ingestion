@@ -7,7 +7,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Set variables
-IMAGE_NAME="registry.local:5000/kafka-timescale-ingestor"
+IMAGE_NAME="192.168.1.221:5001/kafka-timescale-ingestor"
 NAMESPACE="trading"
 DEPLOYMENT_NAME="kafka-timescale-ingestor"
 CONTAINER_NAME="ingestor"

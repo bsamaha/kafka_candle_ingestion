@@ -8,6 +8,6 @@ spec:
     app: kafka-timescale-ingestor
   ports:
   - name: metrics
-    port: 8000
+    port: 8001
     targetPort: metrics
   type: ClusterIP 

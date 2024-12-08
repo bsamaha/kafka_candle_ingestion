@@ -7,17 +7,66 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Set variables
-DOCKERFILE_PATH="./Dockerfile"
 REGISTRY_HOST=${REGISTRY_HOST:-"192.168.1.221"}
 REGISTRY_PORT=${REGISTRY_PORT:-"5001"}
+REGISTRY="${REGISTRY_HOST}:${REGISTRY_PORT}"
 IMAGE_NAME="kafka-timescale-ingestor"
-FULL_IMAGE_NAME="${REGISTRY_HOST}:${REGISTRY_PORT}/${IMAGE_NAME}"
+FULL_IMAGE_NAME="${REGISTRY}/${IMAGE_NAME}"
 VERSION_FILE="./src/version.py"
-INSECURE_REGISTRY=true  # Set to true if using self-signed certificates
 
 # Error handling
 set -e
 trap 'echo -e "${RED}Error: Command failed at line $LINENO${NC}"' ERR
+
+# Function to verify docker image
+verify_docker_image() {
+    local image_tag=$1
+    echo -e "${YELLOW}Verifying image: ${image_tag}${NC}"
+    
+    if ! docker image inspect "${image_tag}" >/dev/null 2>&1; then
+        echo -e "${RED}Error: Image ${image_tag} not found locally${NC}"
+        return 1
+    fi
+    
+    local size=$(docker image inspect "${image_tag}" --format='{{.Size}}')
+    local size_mb=$((size/1024/1024))
+    echo -e "${GREEN}Local image size: ${size_mb}MB${NC}"
+    
+    if [ "$size" -eq 0 ]; then
+        echo -e "${RED}Error: Image ${image_tag} has 0 byte size${NC}"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Function to push with retry
+push_with_retry() {
+    local image_tag=$1
+    local max_retries=3
+    local retry_count=0
+    
+    while [ $retry_count -lt $max_retries ]; do
+        echo -e "${YELLOW}Pushing ${image_tag} (Attempt $((retry_count + 1))/${max_retries})${NC}"
+        
+        if docker push "${image_tag}" 2>&1 | tee /tmp/push_output.log; then
+            echo -e "${GREEN}Successfully pushed ${image_tag}${NC}"
+            return 0
+        fi
+        
+        echo -e "${RED}Push failed. Error output:${NC}"
+        cat /tmp/push_output.log
+        
+        retry_count=$((retry_count + 1))
+        if [ $retry_count -lt $max_retries ]; then
+            echo "Waiting 10 seconds before retry..."
+            sleep 10
+        fi
+    done
+    
+    echo -e "${RED}Failed to push after ${max_retries} attempts${NC}"
+    return 1
+}
 
 # Function to increment version
 increment_version() {
@@ -28,100 +77,97 @@ increment_version() {
     IFS='.' read -r major minor patch <<< "$version"
     case $update_type in
         major)
-            major=$((major + 1))
-            minor=0
-            patch=0
+            echo "$((major + 1)).0.0"
             ;;
         minor)
-            minor=$((minor + 1))
-            patch=0
+            echo "${major}.$((minor + 1)).0"
             ;;
         patch)
-            patch=$((patch + 1))
+            echo "${major}.${minor}.$((patch + 1))"
             ;;
     esac
-    echo "$major.$minor.$patch"
 }
 
-# Create version.py if it doesn't exist
+# Create or read version file
 if [[ ! -f "$VERSION_FILE" ]]; then
     mkdir -p $(dirname "$VERSION_FILE")
     echo "VERSION = '1.0.0'" > "$VERSION_FILE"
     echo -e "${YELLOW}Created initial version file${NC}"
 fi
 
+current_version=$(grep -E "VERSION = '([0-9]+\.[0-9]+\.[0-9]+)'" "$VERSION_FILE" | sed -E "s/VERSION = '(.*)'/\1/")
+
 # Ask if version should be updated
+echo -e "${YELLOW}Current version: $current_version${NC}"
 read -p "Do you want to update the version? (y/n) " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    # Read current version from version.py
-    current_version=$(grep -E "VERSION = '([0-9]+\.[0-9]+\.[0-9]+)'" "$VERSION_FILE" | sed -E "s/VERSION = '(.*)'/\1/")
-
-    if [[ -z "$current_version" ]]; then
-        echo -e "${YELLOW}No valid version found in version.py. Setting initial version to 1.0.0${NC}"
-        new_version="1.0.0"
-    else
-        echo -e "${GREEN}Current version: $current_version${NC}"
-        
-        # Ask for update type
-        while true; do
-            read -p "Is this a major, minor, or patch update? " update_type
-            case $update_type in
-                major|minor|patch) break;;
-                *) echo -e "${RED}Please enter 'major', 'minor', or 'patch'.${NC}";;
-            esac
-        done
-
-        # Increment version
-        new_version=$(increment_version "$current_version" "$update_type")
-    fi
-
-    # Update version in version.py
-    echo "VERSION = '$new_version'" > "$VERSION_FILE"
-    echo -e "${YELLOW}Updated to version $new_version${NC}"
-else
-    # Use current version if it exists, or set to default
-    new_version=$(grep -E "VERSION = '([0-9]+\.[0-9]+\.[0-9]+)'" "$VERSION_FILE" 2>/dev/null | sed -E "s/VERSION = '(.*)'/\1/")
-    if [[ -z "$new_version" ]]; then
-        new_version="1.0.0"
+    echo "Select version increment type:"
+    echo "1) Major (x.0.0)"
+    echo "2) Minor (0.x.0)"
+    echo "3) Patch (0.0.x)"
+    read -r choice
+    
+    case $choice in
+        1) new_version=$(increment_version "$current_version" "major");;
+        2) new_version=$(increment_version "$current_version" "minor");;
+        3) new_version=$(increment_version "$current_version" "patch");;
+        *) echo -e "${RED}Invalid choice${NC}"; exit 1;;
+    esac
+    
+    echo -e "${GREEN}New version will be: $new_version${NC}"
+    read -p "Proceed? (y/n) " -r confirm
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
         echo "VERSION = '$new_version'" > "$VERSION_FILE"
+    else
+        new_version=$current_version
+        echo "Keeping version $current_version"
     fi
-    echo -e "${YELLOW}Keeping current version: $new_version${NC}"
+else
+    new_version=$current_version
 fi
 
-echo -e "${YELLOW}Building version $new_version...${NC}"
+# Set image tags
+VERSION_TAG="${FULL_IMAGE_NAME}:${new_version}"
+LATEST_TAG="${FULL_IMAGE_NAME}:latest"
 
-# Build Docker image with specific version tag
-echo -e "${YELLOW}Building Docker image...${NC}"
-if docker build -t "${FULL_IMAGE_NAME}:${new_version}" .; then
-    # Tag the image as latest
-    docker tag "${FULL_IMAGE_NAME}:${new_version}" "${FULL_IMAGE_NAME}:latest"
-    
-    # Push both version-specific and latest tags to registry
-    echo -e "${YELLOW}Pushing images to registry...${NC}"
-    if [ "$INSECURE_REGISTRY" = true ]; then
-        DOCKER_OPTS="--insecure-registry registry.local:5001"
-        # Configure Docker to accept insecure registry
-        if ! grep -q "registry.local:5001" /etc/docker/daemon.json 2>/dev/null; then
-            echo -e "${YELLOW}Configuring Docker to accept insecure registry...${NC}"
-            sudo mkdir -p /etc/docker
-            echo '{
-    "insecure-registries" : ["registry.local:5001"]
-}' | sudo tee /etc/docker/daemon.json > /dev/null
-            sudo systemctl restart docker
-        fi
-    fi
-
-    if docker $DOCKER_OPTS push "${FULL_IMAGE_NAME}:${new_version}" && \
-       docker $DOCKER_OPTS push "${FULL_IMAGE_NAME}:latest"; then
-        echo -e "${GREEN}Successfully pushed version ${new_version} and latest tags to registry${NC}"
-    else
-        echo -e "${RED}Failed to push images to registry${NC}"
-        exit 1
-    fi
-else
-    echo -e "${RED}Docker build failed${NC}"
+# Test registry connectivity
+echo -e "${YELLOW}Testing registry connectivity...${NC}"
+if ! curl -k -f "https://${REGISTRY}/v2/_catalog" >/dev/null 2>&1; then
+    echo -e "${RED}Cannot connect to registry at ${REGISTRY}${NC}"
     exit 1
 fi
 
-echo -e "${GREEN}Build process completed for version $new_version${NC}" 
+# Build the image
+echo -e "${YELLOW}Building image ${VERSION_TAG}${NC}"
+if ! docker build --no-cache -t "${VERSION_TAG}" -t "${LATEST_TAG}" .; then
+    echo -e "${RED}Build failed${NC}"
+    exit 1
+fi
+
+# Verify local images
+verify_docker_image "${VERSION_TAG}"
+verify_docker_image "${LATEST_TAG}"
+
+# Push images with retry logic
+if ! push_with_retry "${VERSION_TAG}"; then
+    echo -e "${RED}Failed to push version tag${NC}"
+    exit 1
+fi
+
+if ! push_with_retry "${LATEST_TAG}"; then
+    echo -e "${RED}Failed to push latest tag${NC}"
+    exit 1
+fi
+
+# Verify remote image
+echo -e "${YELLOW}Verifying remote image...${NC}"
+docker rmi "${VERSION_TAG}" "${LATEST_TAG}"
+if ! docker pull "${VERSION_TAG}"; then
+    echo -e "${RED}Failed to verify remote image${NC}"
+    exit 1
+fi
+
+verify_docker_image "${VERSION_TAG}"
+
+echo -e "${GREEN}Successfully built and pushed version ${new_version}${NC}" 

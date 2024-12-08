@@ -14,7 +14,7 @@ spec:
         app: kafka-timescale-ingestor
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "8000"
+        prometheus.io/port: "8001"
         prometheus.io/path: "/metrics"
     spec:
       securityContext:
@@ -26,7 +26,7 @@ spec:
         image: 192.168.1.221:5001/kafka-timescale-ingestor:latest
         imagePullPolicy: Always
         ports:
-        - containerPort: 8000
+        - containerPort: 8001
           name: metrics
         envFrom:
         - configMapRef:
@@ -42,6 +42,8 @@ spec:
             secretKeyRef:
               name: timescaledb-service-secrets
               key: password
+        - name: METRICS_PORT
+          value: "8001"
         resources:
           requests:
             memory: "256Mi"
