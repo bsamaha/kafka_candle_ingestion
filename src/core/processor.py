@@ -156,8 +156,7 @@ class KafkaTimescaleIngestion:
         self.running: bool = False
 
     async def startup(self) -> None:
-        from prometheus_client import start_http_server
-        start_http_server(config.metrics.port)
+        """Gracefully shut down all connections and resources."""
         
         kafka_config = config.kafka
         self.consumer = AIOKafkaConsumer(

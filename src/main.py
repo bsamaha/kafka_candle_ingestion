@@ -13,12 +13,11 @@ async def main() -> None:
     setup_structured_logging(os.getenv('LOG_LEVEL', 'INFO'))
     logger.info("application_start", version="1.0.0")
     
-    # Start metrics server
-    await setup_metrics_server()
-    
-    app = KafkaTimescaleIngestion()
-    
     try:
+        # Start metrics server first
+        await setup_metrics_server()
+        
+        app = KafkaTimescaleIngestion()
         await app.startup()
         
         # Setup signal handlers for graceful shutdown
@@ -28,7 +27,7 @@ async def main() -> None:
             loop.add_signal_handler(
                 s, lambda s=s: asyncio.create_task(app.shutdown())
             )
-            
+        
         consumer: AIOKafkaConsumer = app.consumer # type: ignore
         message_processor: MessageProcessor = app.message_processor # type: ignore
             
