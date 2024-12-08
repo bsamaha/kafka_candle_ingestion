@@ -23,7 +23,7 @@ spec:
         fsGroup: 1000
       containers:
       - name: ingestor
-        image: registry.local:5000/kafka-timescale-ingestor:latest
+        image: registry.local:5001/kafka-timescale-ingestor:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 8000

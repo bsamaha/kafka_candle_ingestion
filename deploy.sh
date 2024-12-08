@@ -4,7 +4,7 @@
 NAMESPACE="trading"
 IMAGE_TAG=${IMAGE_TAG:-"latest"}
 REGISTRY_HOST=${REGISTRY_HOST:-"registry.local"}
-REGISTRY_PORT=${REGISTRY_PORT:-"5000"}
+REGISTRY_PORT=${REGISTRY_PORT:-"5001"}
 IMAGE_NAME="kafka-timescale-ingestor"
 FULL_IMAGE_NAME="${REGISTRY_HOST}:${REGISTRY_PORT}/${IMAGE_NAME}"
 
@@ -98,6 +98,26 @@ verify_deployment() {
     echo -e "${GREEN}Deployment verified successfully${NC}"
 }
 
+verify_image() {
+    echo -e "${YELLOW}Verifying image accessibility...${NC}"
+    local image_url="${FULL_IMAGE_NAME}:${IMAGE_TAG}"
+    
+    # Try to pull the image locally first
+    if ! docker pull $image_url; then
+        echo -e "${RED}Failed to pull image: $image_url${NC}"
+        echo -e "${YELLOW}Checking if image exists in registry...${NC}"
+        
+        # Check if image exists in registry
+        if curl -k -s "https://${REGISTRY_HOST}:${REGISTRY_PORT}/v2/${IMAGE_NAME}/tags/list" | grep -q "\"${IMAGE_TAG}\""; then
+            echo -e "${YELLOW}Image exists in registry but cannot be pulled. Check registry credentials and network policy.${NC}"
+        else
+            echo -e "${RED}Image $image_url not found in registry${NC}"
+        fi
+        exit 1
+    fi
+    echo -e "${GREEN}Image verification successful${NC}"
+}
+
 main() {
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
@@ -127,6 +147,7 @@ main() {
     
     verify_prerequisites
     verify_registry_connection
+    verify_image
     deploy_app
     verify_deployment
     

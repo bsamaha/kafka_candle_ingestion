@@ -8,7 +8,10 @@ NC='\033[0m' # No Color
 
 # Set variables
 DOCKERFILE_PATH="./Dockerfile"
-IMAGE_NAME="registry.local:5000/kafka-timescale-ingestor"
+REGISTRY_HOST=${REGISTRY_HOST:-"registry.local"}
+REGISTRY_PORT=${REGISTRY_PORT:-"5001"}
+IMAGE_NAME="kafka-timescale-ingestor"
+FULL_IMAGE_NAME="${REGISTRY_HOST}:${REGISTRY_PORT}/${IMAGE_NAME}"
 VERSION_FILE="./src/version.py"
 INSECURE_REGISTRY=true  # Set to true if using self-signed certificates
 
@@ -90,27 +93,27 @@ echo -e "${YELLOW}Building version $new_version...${NC}"
 
 # Build Docker image with specific version tag
 echo -e "${YELLOW}Building Docker image...${NC}"
-if docker build -t "${IMAGE_NAME}:${new_version}" .; then
+if docker build -t "${FULL_IMAGE_NAME}:${new_version}" .; then
     # Tag the image as latest
-    docker tag "${IMAGE_NAME}:${new_version}" "${IMAGE_NAME}:latest"
+    docker tag "${FULL_IMAGE_NAME}:${new_version}" "${FULL_IMAGE_NAME}:latest"
     
     # Push both version-specific and latest tags to registry
     echo -e "${YELLOW}Pushing images to registry...${NC}"
     if [ "$INSECURE_REGISTRY" = true ]; then
-        DOCKER_OPTS="--insecure-registry registry.local:5000"
+        DOCKER_OPTS="--insecure-registry registry.local:5001"
         # Configure Docker to accept insecure registry
-        if ! grep -q "registry.local:5000" /etc/docker/daemon.json 2>/dev/null; then
+        if ! grep -q "registry.local:5001" /etc/docker/daemon.json 2>/dev/null; then
             echo -e "${YELLOW}Configuring Docker to accept insecure registry...${NC}"
             sudo mkdir -p /etc/docker
             echo '{
-    "insecure-registries" : ["registry.local:5000"]
+    "insecure-registries" : ["registry.local:5001"]
 }' | sudo tee /etc/docker/daemon.json > /dev/null
             sudo systemctl restart docker
         fi
     fi
 
-    if docker $DOCKER_OPTS push "${IMAGE_NAME}:${new_version}" && \
-       docker $DOCKER_OPTS push "${IMAGE_NAME}:latest"; then
+    if docker $DOCKER_OPTS push "${FULL_IMAGE_NAME}:${new_version}" && \
+       docker $DOCKER_OPTS push "${FULL_IMAGE_NAME}:latest"; then
         echo -e "${GREEN}Successfully pushed version ${new_version} and latest tags to registry${NC}"
     else
         echo -e "${RED}Failed to push images to registry${NC}"
