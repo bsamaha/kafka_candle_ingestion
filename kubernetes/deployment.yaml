@@ -17,6 +17,7 @@ spec:
         prometheus.io/port: "8001"
         prometheus.io/path: "/metrics"
     spec:
+      terminationGracePeriodSeconds: 30
       securityContext:
         runAsUser: 1000
         runAsGroup: 1000
@@ -89,11 +90,10 @@ spec:
                   kill -TERM 1
                   # Wait for graceful shutdown
                   sleep 10
-        terminationGracePeriodSeconds: 30
       imagePullSecrets:
       - name: local-registry-cred
   strategy:
     rollingUpdate:
       maxSurge: 1
       maxUnavailable: 0
-    type: RollingUpdate 
+    type: RollingUpdate
