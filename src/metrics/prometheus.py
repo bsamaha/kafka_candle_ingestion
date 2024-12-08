@@ -136,8 +136,9 @@ async def health_check(request: web.Request) -> web.Response:
 async def metrics_handler(request: web.Request) -> web.Response:
     """Handler for Prometheus metrics endpoint"""
     return web.Response(
-        body=generate_latest(),
-        content_type=CONTENT_TYPE_LATEST
+        body=generate_latest(registry),
+        content_type=CONTENT_TYPE_LATEST,
+        charset=None
     )
 
 async def setup_metrics_server():
