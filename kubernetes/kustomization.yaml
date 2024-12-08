@@ -8,7 +8,6 @@ resources:
 - service.yaml
 - configmap.yaml
 - network-policy.yaml
-- registry-config.yaml
 
 commonLabels:
   app: kafka-timescale-ingestor

@@ -10,6 +10,7 @@ NC='\033[0m' # No Color
 DOCKERFILE_PATH="./Dockerfile"
 IMAGE_NAME="registry.local:5000/kafka-timescale-ingestor"
 VERSION_FILE="./src/version.py"
+INSECURE_REGISTRY=true  # Set to true if using self-signed certificates
 
 # Error handling
 set -e
@@ -95,8 +96,21 @@ if docker build -t "${IMAGE_NAME}:${new_version}" .; then
     
     # Push both version-specific and latest tags to registry
     echo -e "${YELLOW}Pushing images to registry...${NC}"
-    if docker push "${IMAGE_NAME}:${new_version}" && \
-       docker push "${IMAGE_NAME}:latest"; then
+    if [ "$INSECURE_REGISTRY" = true ]; then
+        DOCKER_OPTS="--insecure-registry registry.local:5000"
+        # Configure Docker to accept insecure registry
+        if ! grep -q "registry.local:5000" /etc/docker/daemon.json 2>/dev/null; then
+            echo -e "${YELLOW}Configuring Docker to accept insecure registry...${NC}"
+            sudo mkdir -p /etc/docker
+            echo '{
+    "insecure-registries" : ["registry.local:5000"]
+}' | sudo tee /etc/docker/daemon.json > /dev/null
+            sudo systemctl restart docker
+        fi
+    fi
+
+    if docker $DOCKER_OPTS push "${IMAGE_NAME}:${new_version}" && \
+       docker $DOCKER_OPTS push "${IMAGE_NAME}:latest"; then
         echo -e "${GREEN}Successfully pushed version ${new_version} and latest tags to registry${NC}"
     else
         echo -e "${RED}Failed to push images to registry${NC}"

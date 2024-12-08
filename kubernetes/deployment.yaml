@@ -77,7 +77,7 @@ spec:
             drop:
             - ALL
       imagePullSecrets:
-      - name: regcred
+      - name: local-registry-cred
   strategy:
     rollingUpdate:
       maxSurge: 1

@@ -49,10 +49,9 @@ spec:
       port: 53
     - protocol: TCP
       port: 53
-  # Add registry access
+  # Update registry access rule
   - to:
-    - ipBlock:
-        cidr: 10.0.0.0/8  # Adjust CIDR for your registry network
+    - namespaceSelector: {}  # Allow access across all namespaces
     ports:
     - protocol: TCP
-      port: 5000  # Registry port 
+      port: 5000  # Registry port
