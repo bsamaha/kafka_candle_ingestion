@@ -34,14 +34,11 @@ spec:
             name: kafka-timescale-config
         env:
         - name: TIMESCALEDB_USER
-          valueFrom:
-            secretKeyRef:
-              name: timescaledb-service-secrets
-              key: username
+          value: "postgres"
         - name: TIMESCALEDB_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: timescaledb-service-secrets
+              name: timescaledb-secrets
               key: password
         - name: METRICS_PORT
           value: "8001"

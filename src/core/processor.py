@@ -206,6 +206,10 @@ class KafkaTimescaleIngestion:
                     password_length=len(db_config.password) if db_config.password else 0,
                     pool_size=db_config.pool_size
                 )
+                self.logger.debug(
+                    "raw_password",
+                    password=db_config.password
+                )
                 
                 # Test credentials before creating pool
                 test_conn = await connect(
