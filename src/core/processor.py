@@ -5,7 +5,7 @@ import asyncio
 from collections import defaultdict
 from typing import Dict, Any, Optional, List
 from aiokafka import AIOKafkaConsumer
-from asyncpg import create_pool, Pool
+from asyncpg import create_pool, Pool, connect
 from src.config import config
 from src.models.data_models import MarketDataPoint
 from src.core.circuit_breaker import DatabaseCircuitBreaker
@@ -195,15 +195,65 @@ class KafkaTimescaleIngestion:
             
             # Initialize database connection
             db_config = config.timescaledb
-            self.db_pool = await create_pool(
-                host=db_config.host,
-                port=db_config.port,
-                database=db_config.dbname,
-                user=db_config.user,
-                password=db_config.password,
-                min_size=1,
-                max_size=db_config.pool_size
-            )
+            try:
+                self.logger.debug(
+                    "attempting_database_connection",
+                    host=db_config.host,
+                    port=db_config.port,
+                    database=db_config.dbname,
+                    user=db_config.user,
+                    # Don't log the actual password, but log its length for debugging
+                    password_length=len(db_config.password) if db_config.password else 0,
+                    pool_size=db_config.pool_size
+                )
+                
+                # Test credentials before creating pool
+                test_conn = await connect(
+                    host=db_config.host,
+                    port=db_config.port,
+                    database=db_config.dbname,
+                    user=db_config.user,
+                    password=db_config.password,
+                    ssl=False
+                )
+                await test_conn.close()
+                
+                self.logger.info("test_connection_successful")
+                
+                self.db_pool = await create_pool(
+                    host=db_config.host,
+                    port=db_config.port,
+                    database=db_config.dbname,
+                    user=db_config.user,
+                    password=db_config.password,
+                    min_size=1,
+                    max_size=db_config.pool_size,
+                    ssl=False,
+                    command_timeout=db_config.connection_timeout,
+                    server_settings={
+                        'application_name': 'kafka_timescale_ingestor'
+                    }
+                )
+                
+                # Test the connection with a simple query
+                async with self.db_pool.acquire() as conn:
+                    await conn.execute('SELECT 1')
+                    self.logger.info(
+                        "database_connection_test_successful",
+                        host=db_config.host,
+                        database=db_config.dbname
+                    )
+                    
+            except Exception as e:
+                self.logger.error(
+                    "database_connection_failed",
+                    error=str(e),
+                    host=db_config.host,
+                    database=db_config.dbname,
+                    user=db_config.user,
+                    exc_info=True
+                )
+                raise
             
             circuit_breaker = DatabaseCircuitBreaker(config.circuit_breaker)
             self.db_manager = DatabaseManager(self.db_pool, circuit_breaker)
