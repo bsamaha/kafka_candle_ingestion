@@ -17,7 +17,8 @@ data:
   # TimescaleDB Configuration
   TIMESCALEDB_HOST: "timescaledb.trading.svc.cluster.local"
   TIMESCALEDB_PORT: "5432"
-  TIMESCALEDB_DBNAME: "market_data"
+  TIMESCALEDB_DBNAME: "trading"
+  TIMESCALEDB_USER: "trading_service"
   TIMESCALEDB_POOL_SIZE: "10"
   TIMESCALEDB_CONNECTION_TIMEOUT: "10"
   
