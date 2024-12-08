@@ -6,11 +6,11 @@ from collections import defaultdict
 from typing import Dict, Any, Optional, List
 from aiokafka import AIOKafkaConsumer
 from asyncpg import create_pool, Pool
-
 from src.config import config
 from src.models.data_models import MarketDataPoint
 from src.core.circuit_breaker import DatabaseCircuitBreaker
 from src.core.database import DatabaseManager
+from src.utils.logging import get_logger
 from src.metrics.prometheus import (
     messages_consumed, messages_inserted, invalid_messages,
     db_insert_errors, db_insert_latency, current_batch_size,
@@ -154,36 +154,70 @@ class KafkaTimescaleIngestion:
         self.db_manager: Optional[DatabaseManager] = None
         self.message_processor: Optional[MessageProcessor] = None
         self.running: bool = False
+        self._connected: bool = False
+        self.logger = get_logger(__name__)
 
     async def startup(self) -> None:
-        """Gracefully shut down all connections and resources."""
-        
-        kafka_config = config.kafka
-        self.consumer = AIOKafkaConsumer(
-            kafka_config.topic,
-            bootstrap_servers=kafka_config.bootstrap_servers,
-            group_id=kafka_config.group_id,
-            enable_auto_commit=True,
-            auto_offset_reset="earliest"
-        )
-        await self.consumer.start()
-        
-        db_config = config.timescaledb
-        self.db_pool = await create_pool(
-            host=db_config.host,
-            port=db_config.port,
-            database=db_config.dbname,
-            user=db_config.user,
-            password=db_config.password,
-            min_size=1,
-            max_size=db_config.pool_size
-        )
-        
-        circuit_breaker = DatabaseCircuitBreaker(config.circuit_breaker)
-        self.db_manager = DatabaseManager(self.db_pool, circuit_breaker)
-        self.message_processor = MessageProcessor(self.db_manager)
-        
-        self.running = True 
+        """Initialize and start all required services"""
+        try:
+            kafka_config = config.kafka
+            self.consumer = AIOKafkaConsumer(
+                kafka_config.topic,
+                bootstrap_servers=kafka_config.bootstrap_servers,
+                group_id=kafka_config.group_id,
+                enable_auto_commit=True,
+                auto_offset_reset="earliest",
+                retry_backoff_ms=500,
+                session_timeout_ms=30000,
+                request_timeout_ms=40000,
+            )
+            
+            # Start consumer with retries
+            max_retries = 5
+            for attempt in range(max_retries):
+                try:
+                    await self.consumer.start()
+                    self._connected = True
+                    self.logger.info(
+                        "kafka_consumer_started",
+                        bootstrap_servers=kafka_config.bootstrap_servers
+                    )
+                    break
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        raise
+                    self.logger.warning(
+                        "kafka_connection_retry",
+                        attempt=attempt + 1,
+                        error=str(e)
+                    )
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+            
+            # Initialize database connection
+            db_config = config.timescaledb
+            self.db_pool = await create_pool(
+                host=db_config.host,
+                port=db_config.port,
+                database=db_config.dbname,
+                user=db_config.user,
+                password=db_config.password,
+                min_size=1,
+                max_size=db_config.pool_size
+            )
+            
+            circuit_breaker = DatabaseCircuitBreaker(config.circuit_breaker)
+            self.db_manager = DatabaseManager(self.db_pool, circuit_breaker)
+            self.message_processor = MessageProcessor(self.db_manager)
+            
+            self.running = True
+            
+        except Exception as e:
+            self.logger.error(
+                "startup_failed",
+                error=str(e),
+                exc_info=True
+            )
+            raise
 
     async def shutdown(self) -> None:
         """Gracefully shut down all connections and resources."""
