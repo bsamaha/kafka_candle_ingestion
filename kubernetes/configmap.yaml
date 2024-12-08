@@ -15,7 +15,7 @@ data:
   KAFKA_CONSUMER_TIMEOUT_MS: "5000"
   
   # TimescaleDB Configuration
-  TIMESCALEDB_HOST: "timescaledb.default.svc.cluster.local"
+  TIMESCALEDB_HOST: "timescaledb.trading.svc.cluster.local"
   TIMESCALEDB_PORT: "5432"
   TIMESCALEDB_DBNAME: "market_data"
   TIMESCALEDB_POOL_SIZE: "10"
