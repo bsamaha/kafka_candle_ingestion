@@ -45,12 +45,21 @@ verify_prerequisites() {
         exit 1
     fi
     
+    # Verify secret has required fields
+    local required_fields=("TIMESCALEDB_USER" "TIMESCALEDB_PASSWORD")
+    for field in "${required_fields[@]}"; do
+        if ! kubectl get secret timescaledb-service-secrets -n $NAMESPACE -o jsonpath="{.data.$field}" >/dev/null 2>&1; then
+            echo -e "${RED}Error: Required field '$field' not found in secret 'timescaledb-service-secrets'${NC}"
+            exit 1
+        fi
+    done
+    
     echo -e "${GREEN}Prerequisites verified successfully${NC}"
 }
 
 verify_registry_connection() {
     echo -e "${YELLOW}Verifying registry connection...${NC}"
-    if ! curl --cacert /etc/rancher/k3s/certs/registry.crt -s "https://${REGISTRY_HOST}:${REGISTRY_PORT}/v2/_catalog" > /dev/null; then
+    if ! curl -k -s "https://${REGISTRY_HOST}:${REGISTRY_PORT}/v2/_catalog" > /dev/null; then
         echo -e "${RED}Cannot access registry at ${REGISTRY_HOST}:${REGISTRY_PORT}${NC}"
         exit 1
     fi
@@ -61,7 +70,7 @@ deploy_app() {
     echo -e "${YELLOW}Deploying application...${NC}"
     
     # Update the image and tag in the kustomization file
-    sed -i "s|newName: .*|newName: ${FULL_IMAGE_NAME}|" kubernetes/kustomization.yaml
+    sed -i "s|newName: .*|newName: ${REGISTRY_HOST}:${REGISTRY_PORT}/${IMAGE_NAME}|" kubernetes/kustomization.yaml
     sed -i "s|newTag: .*|newTag: ${IMAGE_TAG}|" kubernetes/kustomization.yaml
     
     # Apply kustomization
@@ -69,6 +78,9 @@ deploy_app() {
         echo -e "${RED}Failed to apply kustomization${NC}"
         exit 1
     fi
+    
+    # Apply network policy explicitly
+    kubectl apply -f kubernetes/network-policy.yaml -n $NAMESPACE
 }
 
 verify_deployment() {
@@ -96,53 +108,6 @@ verify_deployment() {
     fi
     
     echo -e "${GREEN}Deployment verified successfully${NC}"
-}
-
-verify_image() {
-    echo -e "${YELLOW}Verifying image accessibility...${NC}"
-    local image_url="${FULL_IMAGE_NAME}:${IMAGE_TAG}"
-    
-    # Try to pull the image locally first
-    if ! docker pull $image_url; then
-        echo -e "${RED}Failed to pull image: $image_url${NC}"
-        echo -e "${YELLOW}Checking if image exists in registry...${NC}"
-        
-        # Check if image exists in registry
-        if curl --cacert /etc/rancher/k3s/certs/registry.crt -s "https://${REGISTRY_HOST}:${REGISTRY_PORT}/v2/${IMAGE_NAME}/tags/list" | grep -q "\"${IMAGE_TAG}\""; then
-            echo -e "${YELLOW}Image exists in registry but cannot be pulled. Check registry credentials and network policy.${NC}"
-        else
-            echo -e "${RED}Image $image_url not found in registry${NC}"
-        fi
-        exit 1
-    fi
-    echo -e "${GREEN}Image verification successful${NC}"
-}
-
-# Add this new function to configure Docker for insecure registry
-configure_insecure_registry() {
-    echo -e "${YELLOW}Configuring Docker for insecure registry...${NC}"
-    
-    local daemon_json="/etc/docker/daemon.json"
-    local registry_entry="${REGISTRY_HOST}:${REGISTRY_PORT}"
-    
-    # Create or update daemon.json
-    if [ ! -f "$daemon_json" ]; then
-        echo "{\"insecure-registries\": [\"$registry_entry\"]}" | sudo tee "$daemon_json" > /dev/null
-        sudo systemctl restart docker
-    else
-        if ! grep -q "insecure-registries" "$daemon_json"; then
-            sudo cp "$daemon_json" "$daemon_json.bak"
-            echo "{\"insecure-registries\": [\"$registry_entry\"]}" | sudo tee "$daemon_json" > /dev/null
-            sudo systemctl restart docker
-        elif ! grep -q "$registry_entry" "$daemon_json"; then
-            sudo cp "$daemon_json" "$daemon_json.bak"
-            sudo jq --arg reg "$registry_entry" '.["insecure-registries"] += [$reg]' "$daemon_json" | sudo tee "$daemon_json.tmp" > /dev/null
-            sudo mv "$daemon_json.tmp" "$daemon_json"
-            sudo systemctl restart docker
-        fi
-    fi
-    
-    echo -e "${GREEN}Docker configured for insecure registry${NC}"
 }
 
 main() {
@@ -173,9 +138,7 @@ main() {
     echo "Image tag: $IMAGE_TAG"
     
     verify_prerequisites
-    configure_insecure_registry
     verify_registry_connection
-    verify_image
     deploy_app
     verify_deployment
     
