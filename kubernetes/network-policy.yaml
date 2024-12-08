@@ -23,9 +23,9 @@ spec:
     - namespaceSelector:
         matchLabels:
           kubernetes.io/metadata.name: kafka
-  ports:
-  - port: 9092
-    protocol: TCP
+    ports:
+    - port: 9092
+      protocol: TCP
   - to:
     - ipBlock:
         cidr: 0.0.0.0/0
