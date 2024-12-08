@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-timescale-config
+  namespace: trading
+  labels:
+    app: kafka-timescale-ingestor
+data:
+  # Kafka Configuration
+  KAFKA_BOOTSTRAP_SERVERS: "trading-cluster-kafka-bootstrap.kafka:9092"
+  KAFKA_TOPIC: "coinbase.candles"
+  KAFKA_GROUP_ID: "timescale_ingest_group"
+  KAFKA_INITIAL_POLL_TIMEOUT: "1.0"
+  KAFKA_INITIAL_MAX_BATCH_SIZE: "500"
+  KAFKA_CONSUMER_TIMEOUT_MS: "5000"
+  
+  # TimescaleDB Configuration
+  TIMESCALEDB_HOST: "timescaledb.default.svc.cluster.local"
+  TIMESCALEDB_PORT: "5432"
+  TIMESCALEDB_DBNAME: "market_data"
+  TIMESCALEDB_POOL_SIZE: "10"
+  TIMESCALEDB_CONNECTION_TIMEOUT: "10"
+  
+  # Insert Configuration
+  INSERT_BATCH_SIZE: "500"
+  INSERT_TIME_INTERVAL: "5.0"
+  INSERT_RETRY_ATTEMPTS: "3"
+  INSERT_RETRY_DELAY: "1.0"
+  
+  # Metrics Configuration
+  METRICS_PORT: "8000"
+  
+  # Dynamic Polling Configuration
+  LATENCY_THRESHOLD_HIGH: "1.0"
+  LATENCY_THRESHOLD_LOW: "0.2"
+  POLL_TIMEOUT_MIN: "0.5"
+  POLL_TIMEOUT_MAX: "5.0"
+  BATCH_SIZE_MIN: "100"
+  BATCH_SIZE_MAX: "2000"
+  
+  # Circuit Breaker Configuration
+  CB_FAILURE_THRESHOLD: "5"
+  CB_RESET_TIMEOUT: "60.0"
+  CB_HALF_OPEN_TIMEOUT: "30.0"
+  
+  # Logging Configuration
+  LOG_LEVEL: "INFO"
+  
+  # Resource Limits Configuration
+  MEMORY_LIMIT_MB: "512"
+  CPU_LIMIT_CORES: "0.5"

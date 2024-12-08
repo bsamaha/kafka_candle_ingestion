@@ -1,0 +1,32 @@
+# Core Dependencies
+aiokafka
+asyncpg
+pydantic
+pydantic_core
+
+# Monitoring and Metrics
+prometheus_client
+aiohttp
+
+# Async Support
+async-timeout
+typing_extensions
+
+# Testing
+pytest
+pytest-asyncio
+pytest-docker
+pytest-cov
+pytest-mock
+
+# Development Tools
+black
+isort
+mypy
+ruff
+
+# Utilities
+docker
+packaging
+python-dotenv
+structlog

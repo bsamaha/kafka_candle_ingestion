@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: trading
+
+resources:
+- deployment.yaml
+- service.yaml
+- configmap.yaml
+- network-policy.yaml
+- registry-config.yaml
+
+commonLabels:
+  app: kafka-timescale-ingestor
+  environment: production
+
+images:
+- name: kafka-timescale-ingestor
+  newName: registry.local:5000/kafka-timescale-ingestor
+  newTag: latest 

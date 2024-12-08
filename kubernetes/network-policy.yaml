@@ -1,0 +1,58 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kafka-timescale-ingestor-policy
+  namespace: trading
+  labels:
+    app: kafka-timescale-ingestor
+spec:
+  podSelector:
+    matchLabels:
+      app: kafka-timescale-ingestor
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    # Allow Prometheus scraping from monitoring namespace
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 8000  # Metrics port
+  egress:
+  - to:
+    # Allow connections to Kafka
+    - namespaceSelector:
+        matchLabels:
+          name: kafka
+    ports:
+    - protocol: TCP
+      port: 9092
+  - to:
+    # Allow connections to TimescaleDB
+    - namespaceSelector:
+        matchLabels:
+          name: default  # Since TimescaleDB is in default namespace
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow DNS resolution
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Add registry access
+  - to:
+    - ipBlock:
+        cidr: 10.0.0.0/8  # Adjust CIDR for your registry network
+    ports:
+    - protocol: TCP
+      port: 5000  # Registry port 

@@ -1,0 +1,39 @@
+# Version control
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+tests/
+
+# Kubernetes
+kubernetes/
+*.yaml
+*.yml
+
+# Documentation
+*.md
+LICENSE
+
+# Development
+Dockerfile
+docker-compose*
+.dockerignore 

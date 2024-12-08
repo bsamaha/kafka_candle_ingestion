@@ -1,0 +1,80 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.python-version
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# Kubernetes
+secrets.env
+*.secrets.yaml
+kubeconfig
+
+# Logs
+*.log
+logs/
+log/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Project specific
+*.db
+*.sqlite3
+*.sqlite
+.env.local
+.env.*.local
+node_modules/
+
+# Prometheus & Metrics
+prometheus/
+metrics/ 
