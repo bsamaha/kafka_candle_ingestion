@@ -74,7 +74,3 @@ Thumbs.db
 .env.local
 .env.*.local
 node_modules/
-
-# Prometheus & Metrics
-prometheus/
-metrics/ 
