@@ -87,117 +87,24 @@ fi
 
 echo -e "${YELLOW}Building version $new_version...${NC}"
 
-# Build and push Docker image
-build_and_push() {
-    local VERSION=$(date +%Y%m%d-%H%M%S)
-    echo -e "${YELLOW}Building Docker image version: $VERSION${NC}"
+# Build Docker image with specific version tag
+echo -e "${YELLOW}Building Docker image...${NC}"
+if docker build -t "${IMAGE_NAME}:${new_version}" .; then
+    # Tag the image as latest
+    docker tag "${IMAGE_NAME}:${new_version}" "${IMAGE_NAME}:latest"
     
-    # Build with platform specification
-    docker build --platform linux/amd64 -t "${IMAGE_NAME}:${VERSION}" .
-    
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}Docker build failed${NC}"
+    # Push both version-specific and latest tags to registry
+    echo -e "${YELLOW}Pushing images to registry...${NC}"
+    if docker push "${IMAGE_NAME}:${new_version}" && \
+       docker push "${IMAGE_NAME}:latest"; then
+        echo -e "${GREEN}Successfully pushed version ${new_version} and latest tags to registry${NC}"
+    else
+        echo -e "${RED}Failed to push images to registry${NC}"
         exit 1
     fi
-    
-    docker tag "${IMAGE_NAME}:${VERSION}" "${IMAGE_NAME}:latest"
-    
-    # Push to local registry
-    docker push "${IMAGE_NAME}:${VERSION}"
-    docker push "${IMAGE_NAME}:latest"
-    
-    echo -e "${GREEN}Docker image built and pushed successfully${NC}"
-}
-
-# Build Docker image with specific version tag
-docker build -t "${IMAGE_NAME}:${new_version}" .
-
-if [ $? -ne 0 ]; then
+else
     echo -e "${RED}Docker build failed${NC}"
     exit 1
-fi
-
-# Tag the image as latest
-docker tag "${IMAGE_NAME}:${new_version}" "${IMAGE_NAME}:latest"
-
-# Ask for confirmation before pushing
-read -p "Do you want to push the images to local registry? (y/n) " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    # Push both version-specific and latest tags to registry
-    echo -e "${YELLOW}Pushing ${IMAGE_NAME}:${new_version}...${NC}"
-    docker push "${IMAGE_NAME}:${new_version}"
-    
-    echo -e "${YELLOW}Pushing ${IMAGE_NAME}:latest...${NC}"
-    docker push "${IMAGE_NAME}:latest"
-    
-    echo -e "${GREEN}Successfully pushed version $new_version and latest tags to registry${NC}"
-else
-    echo -e "${YELLOW}Images built but not pushed to registry${NC}"
-fi
-
-# Function to check git configuration
-check_git_config() {
-    if ! git config --get user.name > /dev/null || ! git config --get user.email > /dev/null; then
-        echo -e "${YELLOW}Git configuration incomplete. Setting temporary values...${NC}"
-        git config --local user.name "Build Script"
-        git config --local user.email "build@local"
-        return 1
-    fi
-    return 0
-}
-
-# Function to handle git operations
-handle_git_operations() {
-    local new_version=$1
-    local git_config_status=0
-    
-    # Check if we're in a git repository
-    if ! git rev-parse --git-dir > /dev/null 2>&1; then
-        echo -e "${RED}Not a git repository. Skipping git operations.${NC}"
-        return 1
-    fi
-    
-    # Check git configuration
-    check_git_config
-    git_config_status=$?
-
-    # Attempt git operations
-    if git add "$VERSION_FILE" && \
-       git commit -m "Bump version to $new_version" && \
-       git tag -a "v$new_version" -m "Version $new_version"; then
-        
-        read -p "Do you want to push the git tag and changes? (y/n) " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            if git push origin "v$new_version" && git push origin HEAD; then
-                echo -e "${GREEN}Successfully pushed git tag and changes${NC}"
-            else
-                echo -e "${RED}Failed to push git changes. Please push manually.${NC}"
-                return 1
-            fi
-        fi
-    else
-        echo -e "${RED}Git operations failed. Please check your git configuration and permissions.${NC}"
-        return 1
-    fi
-
-    # Cleanup temporary git config if we set it
-    if [ $git_config_status -eq 1 ]; then
-        git config --local --unset user.name
-        git config --local --unset user.email
-    fi
-
-    return 0
-}
-
-# Replace the git tag section with:
-read -p "Do you want to create a git tag for this version? (y/n) " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    if ! handle_git_operations "$new_version"; then
-        echo -e "${YELLOW}Continuing with deployment despite git operation failure...${NC}"
-    fi
 fi
 
 echo -e "${GREEN}Build process completed for version $new_version${NC}" 
