@@ -1,4 +1,5 @@
 import time
+import random
 from typing import Any, Callable
 from src.models.data_models import CircuitBreakerState
 from src.metrics.prometheus import (
@@ -47,6 +48,8 @@ class DatabaseCircuitBreaker:
     def _should_attempt_reset(self) -> bool:
         """Determine if enough time has passed to attempt reset"""
         time_since_failure = time.time() - self.last_failure_time
+        if self.state == CircuitBreakerState.HALF_OPEN:
+            return time_since_failure >= self.config.half_open_timeout
         return time_since_failure >= self.config.reset_timeout
 
     def _handle_success(self) -> None:
@@ -97,14 +100,14 @@ class DatabaseCircuitBreaker:
                 self.state = CircuitBreakerState.HALF_OPEN
                 self._update_metrics()
             else:
-                wait_time = self.config.reset_timeout - (time.time() - self.last_failure_time)
+                jitter = random.uniform(0, 2.0)
+                wait_time = self.config.reset_timeout - (time.time() - self.last_failure_time) + jitter
                 logger.warning(
                     "circuit_breaker_open",
                     wait_time=f"{wait_time:.1f}s"
                 )
-                raise CircuitBreakerError(
-                    f"Circuit breaker is OPEN. Retry available in {wait_time:.1f}s"
-                )
+                
+                return None
 
         try:
             start_time = time.time()
@@ -135,9 +138,7 @@ class DatabaseCircuitBreaker:
                 exc_info=True
             )
             
-            raise CircuitBreakerError(
-                f"Operation failed in {self.state.value} state: {str(e)}"
-            ) from e
+            return None
 
     async def get_status(self) -> dict:
         """Get current circuit breaker status"""

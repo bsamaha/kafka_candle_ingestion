@@ -5,25 +5,31 @@ from datetime import datetime
 
 class MarketDataPoint(BaseModel):
     """Validates and structures incoming market data"""
-    event_time: Union[str, int]
+    event_time: datetime
     symbol: str
     open_price: float
     high_price: float
     low_price: float
     close_price: float
     volume: float
-    start_time: Union[str, int]
-    timestamp: Union[str, int]
+    start_time: datetime
+    timestamp: datetime
 
-    @field_validator('event_time', 'start_time', 'timestamp')
+    @field_validator('event_time', 'start_time', 'timestamp', mode='before')
     @classmethod
-    def validate_timestamps(cls, v: Union[str, int]) -> str:
-        # Convert integer timestamps to ISO format strings
+    def validate_timestamps(cls, v: Union[str, int]) -> datetime:
+        # Convert integer timestamps to datetime
         if isinstance(v, int):
             try:
-                return datetime.fromtimestamp(v).isoformat()
+                return datetime.fromtimestamp(v)
             except (ValueError, OSError) as e:
                 raise ValueError(f"Invalid timestamp value: {v}") from e
+        # Convert ISO format strings to datetime
+        if isinstance(v, str):
+            try:
+                return datetime.fromisoformat(v)
+            except ValueError as e:
+                raise ValueError(f"Invalid datetime string: {v}") from e
         return v
 
     @field_validator('open_price', 'high_price', 'low_price', 'close_price', 'volume')

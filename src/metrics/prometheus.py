@@ -2,7 +2,9 @@ from prometheus_client import Counter, Histogram, Gauge, Summary, CollectorRegis
 from src.utils.logging import get_logger
 from src.config import config
 from aiohttp import web
-from typing import Any
+from typing import Any, Dict, cast, List, Sequence
+from asyncpg import Connection, Record
+from src.models.metrics_models import DBStats, ManagerStats, DBQueryResult
 
 logger = get_logger(__name__)
 
@@ -78,7 +80,7 @@ current_batch_size = Gauge(
 batch_size_histogram = Histogram(
     "timescale_ingest_batch_size",
     "Distribution of batch sizes",
-    buckets=[10, 50, 100, 200, 500, 1000, 2000]
+    buckets=[1, 10, 50, 100, 200, 500, 1000, 2000]
 )
 
 # Circuit Breaker Metrics
@@ -128,6 +130,78 @@ message_processing_rate = Summary(
     "Rate of message processing per second"
 )
 
+# Enhanced Database Metrics
+db_records_total = Gauge(
+    "timescale_ingest_db_records_total",
+    "Total number of records in the database",
+    ["symbol"]
+)
+
+db_oldest_record = Gauge(
+    "timescale_ingest_db_oldest_record_timestamp",
+    "Timestamp of oldest record in database"
+)
+
+db_newest_record = Gauge(
+    "timescale_ingest_db_newest_record_timestamp",
+    "Timestamp of newest record in database"
+)
+
+db_retry_queue_size = Gauge(
+    "timescale_ingest_db_retry_queue_size",
+    "Number of records waiting in retry queue"
+)
+
+# Enhanced Batch Processing Metrics
+batch_processing_total = Counter(
+    "timescale_ingest_batch_processing_total",
+    "Total number of batches processed",
+    ["status"]  # success, retry, dropped
+)
+
+# Data Validation Metrics
+data_validation_errors = Counter(
+    "timescale_ingest_data_validation_errors_total",
+    "Total number of data validation errors",
+    ["field", "error_type"]
+)
+
+async def update_db_stats_metrics(stats: ManagerStats, conn: Connection) -> None:
+    """Update Prometheus metrics with database statistics"""
+    try:
+        db_stats = stats['db_stats']
+        
+        # Update total records per symbol
+        symbols_query: Sequence[Record] = await conn.fetch("""
+            SELECT symbol, COUNT(*) as count 
+            FROM candles 
+            GROUP BY symbol
+        """)
+        for record in symbols_query:
+            # Cast the record values to ensure correct types
+            symbol = cast(str, record['symbol'])
+            count = cast(int, record['count'])
+            db_records_total.labels(symbol=symbol).set(count)
+        
+        # Convert datetime to timestamp for Prometheus
+        oldest = db_stats['oldest_record'].timestamp() if db_stats['oldest_record'] else 0
+        newest = db_stats['newest_record'].timestamp() if db_stats['newest_record'] else 0
+        
+        db_oldest_record.set(oldest)
+        db_newest_record.set(newest)
+        db_retry_queue_size.set(stats['retry_queue_size'])
+        
+        # Update batch stats
+        for status, count in stats['batch_stats'].items():
+            batch_processing_total.labels(status=str(status)).inc(int(count))
+            
+    except Exception as e:
+        logger.error(
+            "metrics_update_failed",
+            error=str(e),
+            exc_info=True
+        )
+
 async def health_check(request: web.Request) -> web.Response:
     """Health check endpoint for k8s probes"""
     logger.debug("health_check_called")
@@ -135,11 +209,22 @@ async def health_check(request: web.Request) -> web.Response:
 
 async def metrics_handler(request: web.Request) -> web.Response:
     """Handler for Prometheus metrics endpoint"""
-    return web.Response(
-        body=generate_latest(registry),
-        content_type=CONTENT_TYPE_LATEST,
-        charset=None
-    )
+    try:
+        # Generate metrics including registry metrics
+        metrics_data = generate_latest(registry)
+        
+        # Create response with proper content type
+        return web.Response(
+            body=metrics_data,
+            headers={'Content-Type': CONTENT_TYPE_LATEST}
+        )
+    except Exception as e:
+        logger.error(
+            "metrics_generation_failed",
+            error=str(e),
+            exc_info=True
+        )
+        return web.Response(status=500, text=str(e))
 
 async def setup_metrics_server():
     """Setup metrics and health check endpoints"""

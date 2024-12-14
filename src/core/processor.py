@@ -4,7 +4,7 @@ import logging
 import asyncio
 from collections import defaultdict
 from typing import Dict, Any, Optional, List
-from aiokafka import AIOKafkaConsumer
+from aiokafka import AIOKafkaConsumer, TopicPartition
 from asyncpg import create_pool, Pool, connect
 from src.config import config
 from src.models.data_models import MarketDataPoint
@@ -20,11 +20,12 @@ from src.metrics.prometheus import (
     kafka_partition_offset
 )
 
-logger = logging.getLogger(__name__)  # Add if missing
+logger = get_logger(__name__)
 
 class MessageProcessor:
-    def __init__(self, db_manager: DatabaseManager):
+    def __init__(self, db_manager: DatabaseManager, consumer: AIOKafkaConsumer):
         self.db_manager = db_manager
+        self.consumer = consumer
         self.records_buffer: List[Dict[str, Any]] = []
         self.last_flush_time = time.time()
         
@@ -34,8 +35,6 @@ class MessageProcessor:
         # Update metrics for initial values
         current_poll_timeout.set(self.current_poll_timeout)
         current_max_batch_size.set(self.current_max_batch_size)
-
-        self.logger = logger  # Consider adding instance logger
 
     def parse_message(self, raw_value: bytes) -> Optional[Dict[str, Any]]:
         try:
@@ -58,12 +57,30 @@ class MessageProcessor:
             current_batch_size.set(len(self.records_buffer))
             batch_size_histogram.observe(len(self.records_buffer))
             
-            # Track Kafka consumer metrics
-            kafka_consumer_lag.labels(partition=str(msg.partition)).set(
-                msg.highwater - msg.offset
-            )
-            kafka_partition_offset.labels(partition=str(msg.partition)).set(msg.offset)
-            
+            # Update Kafka consumer metrics using position() instead of highwater
+            try:
+                partition = msg.partition
+                topic = msg.topic
+                consumer = self.consumer
+                
+                # Get the current position and end offset
+                position = await consumer.position(TopicPartition(topic, partition))
+                end_offset = await consumer.end_offsets([TopicPartition(topic, partition)])
+                
+                # Calculate lag
+                lag = end_offset[TopicPartition(topic, partition)] - position
+                kafka_consumer_lag.labels(partition=str(partition)).set(lag)
+                kafka_partition_offset.labels(partition=str(partition)).set(position)
+                
+            except Exception as e:
+                logger.warning(
+                    "kafka_metrics_update_failed",
+                    error_info=str(e),
+                    topic=topic,
+                    partition_id=str(partition),
+                    exc_info=True
+                )
+                
             # Measure consume latency
             kafka_consume_latency.observe(time.time() - start_time)
             
@@ -261,7 +278,7 @@ class KafkaTimescaleIngestion:
             
             circuit_breaker = DatabaseCircuitBreaker(config.circuit_breaker)
             self.db_manager = DatabaseManager(self.db_pool, circuit_breaker)
-            self.message_processor = MessageProcessor(self.db_manager)
+            self.message_processor = MessageProcessor(self.db_manager, self.consumer)
             
             self.running = True
             
