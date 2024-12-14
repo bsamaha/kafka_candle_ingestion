@@ -2,7 +2,7 @@ import logging
 import asyncio
 from typing import List, Dict, Any, Optional, cast
 from asyncpg import Pool, Connection, DeadlockDetectedError, UniqueViolationError, Record
-from datetime import datetime
+from datetime import datetime, timedelta
 from src.models.metrics_models import DBStats, ManagerStats, DBQueryResult
 from src.core.circuit_breaker import DatabaseCircuitBreaker
 from src.metrics.prometheus import (
@@ -151,7 +151,7 @@ class DatabaseManager:
             async with self.pool.acquire() as conn:
                 self._update_pool_metrics()
                 
-                # Add validation for numeric fields and include default interval
+                # Add validation for numeric fields and convert interval to timedelta
                 values = []
                 for r in records:
                     try:
@@ -159,7 +159,8 @@ class DatabaseManager:
                             r['start_time'], r['symbol'],
                             float(r['open_price']), float(r['high_price']),
                             float(r['low_price']), float(r['close_price']),
-                            float(r['volume']), 5  # Default 5-minute interval
+                            float(r['volume']), 
+                            timedelta(minutes=5)  # Convert 5 to a proper interval
                         ))
                     except (ValueError, TypeError) as e:
                         logger.error(
