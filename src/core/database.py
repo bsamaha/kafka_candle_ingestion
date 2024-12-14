@@ -151,7 +151,7 @@ class DatabaseManager:
             async with self.pool.acquire() as conn:
                 self._update_pool_metrics()
                 
-                # Add validation for numeric fields
+                # Add validation for numeric fields and include default interval
                 values = []
                 for r in records:
                     try:
@@ -159,7 +159,7 @@ class DatabaseManager:
                             r['start_time'], r['symbol'],
                             float(r['open_price']), float(r['high_price']),
                             float(r['low_price']), float(r['close_price']),
-                            float(r['volume'])
+                            float(r['volume']), 5  # Default 5-minute interval
                         ))
                     except (ValueError, TypeError) as e:
                         logger.error(
@@ -182,14 +182,15 @@ class DatabaseManager:
                         """
                         INSERT INTO candles (
                             time, symbol, open, high, 
-                            low, close, volume
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                            low, close, volume, interval
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                         ON CONFLICT (time, symbol) DO UPDATE SET
                             open = EXCLUDED.open,
                             high = GREATEST(candles.high, EXCLUDED.high),
                             low = LEAST(candles.low, EXCLUDED.low),
                             close = EXCLUDED.close,
-                            volume = EXCLUDED.volume
+                            volume = EXCLUDED.volume,
+                            interval = EXCLUDED.interval
                         RETURNING time, symbol
                         """,
                         values

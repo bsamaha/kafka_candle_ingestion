@@ -5,6 +5,8 @@ from aiohttp import web
 from typing import Any, Dict, cast, List, Sequence
 from asyncpg import Connection, Record
 from src.models.metrics_models import DBStats, ManagerStats, DBQueryResult
+from datetime import datetime, timezone
+import json
 
 logger = get_logger(__name__)
 
@@ -205,7 +207,37 @@ async def update_db_stats_metrics(stats: ManagerStats, conn: Connection) -> None
 async def health_check(request: web.Request) -> web.Response:
     """Health check endpoint for k8s probes"""
     logger.debug("health_check_called")
-    return web.Response(text="healthy")
+    
+    try:
+        # Check if metrics server is running
+        metrics_data = generate_latest(registry)
+        
+        # Get application instance from request
+        app = request.app
+        
+        # Return detailed health status
+        health_status = {
+            "status": "healthy",
+            "metrics_server": "up",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+        return web.json_response(health_status)
+        
+    except Exception as e:
+        logger.error(
+            "health_check_failed",
+            error=str(e),
+            exc_info=True
+        )
+        return web.Response(
+            status=500,
+            text=json.dumps({
+                "status": "unhealthy",
+                "error": str(e),
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            })
+        )
 
 async def metrics_handler(request: web.Request) -> web.Response:
     """Handler for Prometheus metrics endpoint"""

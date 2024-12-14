@@ -53,7 +53,7 @@ spec:
           httpGet:
             path: /health
             port: metrics
-          initialDelaySeconds: 30
+          initialDelaySeconds: 60
           periodSeconds: 30
           timeoutSeconds: 5
           failureThreshold: 3
@@ -61,14 +61,18 @@ spec:
           httpGet:
             path: /health
             port: metrics
-          initialDelaySeconds: 15
+          initialDelaySeconds: 30
           periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
         startupProbe:
           httpGet:
             path: /health
             port: metrics
-          failureThreshold: 30
+          failureThreshold: 60
           periodSeconds: 10
+          timeoutSeconds: 5
+          initialDelaySeconds: 20
         securityContext:
           allowPrivilegeEscalation: false
           runAsNonRoot: true
